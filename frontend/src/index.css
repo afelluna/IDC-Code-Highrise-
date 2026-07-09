@@ -1,0 +1,231 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Unified Resilience Platform (URP) — Design Tokens
+   Source: URP Brand Guidelines / urp-usher-wehlo/brand-tokens.css
+   ========================================================================== */
+
+/* ─── Design Tokens: Light Mode (default) ─────────────────────────────────── */
+:root {
+  /* URP raw palette — muted, blue-green-leaning tones. Kept deliberately
+     low-saturation vs. the original URP brand colors: this UI runs on a
+     kiosk touchscreen for extended periods, and less vibrant/bright colors
+     reduce screen heat and eye strain. */
+  --color-green:    #5E8C6A;   /* muted sage green — active / success / live */
+  --color-blue:     #4C6E8C;   /* muted slate blue — primary / brand accent */
+  --color-teal:     #6FA6A0;   /* dusty teal        — secondary / scanning */
+  --color-black:    #000000;
+  --color-grey:     #545454;
+  --color-white:    #FFFFFF;
+
+  /* Surfaces (legacy names kept, remapped to URP) */
+  --bg-base:        #eef2f1;   /* page canvas (cool blue-green gray) */
+  --bg-surface:     #fafbfb;   /* card / panel */
+  --bg-elevated:    #eef3f2;   /* inset chart wells */
+  --surface-page:   #eef2f1;
+  --surface-card:   #fafbfb;
+
+  /* Borders */
+  --border-subtle:  #e7edec;
+  --border-default: #d7e1e0;
+  --border-focus:   #4c6e8c;
+
+  /* Text */
+  --text-primary:   #263238;
+  --text-secondary: #56676a;
+  --text-muted:     #93a3a6;
+  --text-on-accent: #ffffff;
+
+  /* Brand */
+  --brand:          #4c6e8c;
+  --brand-dim:      #e6edf0;
+
+  /* Semantic Status — muted, blue-green-leaning palette */
+  --status-live:    #5e8c6a;   /* sage green  — confirmed signal / active */
+  --status-init:    #6fa6a0;   /* dusty teal  — scanning / loading */
+  --status-warn:    #c99a54;   /* muted amber — threshold / degraded */
+  --status-error:   #c1605c;   /* muted brick — reserved, true errors only */
+  --status-idle:    #93a3a6;   /* muted grey  — offline / stale */
+
+  /* Radius */
+  --radius-sm:      4px;
+  --radius-md:      8px;
+  --radius-lg:      12px;
+  --radius-xl:      16px;
+  --radius-full:    9999px;
+
+  /* Spacing — 8px system (2=8px, 1.5=6px kept only for the tightest kiosk gaps) */
+  --space-1:        4px;
+  --space-2:        8px;
+  --space-3:        12px;
+  --space-4:        16px;
+  --space-5:        20px;
+  --space-6:        24px;
+
+  /* Card elevation — soft, layered (ambient + contact shadow), no hard edges */
+  --shadow-xs:      0 1px 2px rgba(16, 24, 32, 0.04);
+  --shadow-card:    0 1px 2px rgba(16, 24, 32, 0.04), 0 4px 14px rgba(16, 24, 32, 0.06);
+  --shadow-raised:  0 2px 4px rgba(16, 24, 32, 0.05), 0 8px 24px rgba(16, 24, 32, 0.08);
+}
+
+/* ─── Design Tokens: Dark Mode ────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg-base:        #10161a;
+  --bg-surface:     #1a2428;
+  --bg-elevated:    #212f33;
+  --surface-page:   #10161a;
+  --surface-card:   #1a2428;
+  --border-subtle:  rgba(255, 255, 255, 0.05);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --text-primary:   #dce6e8;
+  --text-secondary: #8fa3a6;
+  --text-muted:     #607376;
+  --brand:          #6c93b0;
+  --brand-dim:      rgba(76, 110, 140, 0.18);
+  --shadow-card:    0 4px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-raised:  0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+@layer base {
+  /* ─── Base Layout ─────────────────────────────────────────────────────── */
+  html, body, #root {
+    width: 100%;
+    height: 100%;
+    min-width: 800px;
+    min-height: 440px;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: 'Poppins', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.3s ease;
+  }
+
+  /* Monospace font utility (numeric readouts) */
+  .font-mono {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+  }
+
+  /* Custom scrollbar hiding */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* ==========================================================================
+   URP UTILITY CLASSES — minimalist, Google-style helpers
+   ========================================================================== */
+
+/* Status dot — small colored indicator, no filled pills */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+.status-dot.live    { background-color: var(--status-live); }
+.status-dot.scanning{ background-color: var(--status-init); }
+.status-dot.idle    { background-color: var(--status-idle); }
+.status-dot.error   { background-color: var(--status-error); }
+
+/* Summary metric tile */
+.summary-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+}
+
+/* ==========================================================================
+   PEIS "SIGNAL" ANIMATION — the intensity card communicates urgency by tier.
+   GPU-only (transform + opacity); no harsh strobe (photosensitivity-safe).
+   Tiers: calm (1–4) steady · elevated (5–7) slow breathe · critical (8–10)
+   rapid pulse + expanding wave. Overlays live inside the card (overflow-hidden),
+   so the base level color still encodes the level underneath.
+   ========================================================================== */
+
+/* Center brightness glow that "breathes" — tone-heightening via opacity. */
+.peis-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(circle at center,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.0) 65%);
+  opacity: 0;
+  will-change: opacity, transform;
+}
+.peis-glow.elevated {
+  animation: peis-breathe 1.2s ease-in-out infinite;
+}
+.peis-glow.critical {
+  animation: peis-pulse 0.6s ease-in-out infinite;
+}
+
+/* Expanding wave ring(s) — only rendered for the critical tier. */
+.peis-wave {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40%;
+  aspect-ratio: 1 / 1;
+  margin: -20% 0 0 -20%;
+  border-radius: var(--radius-full);
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: peis-wave-out 1.6s ease-out infinite;
+}
+.peis-wave.delay { animation-delay: 0.8s; }
+
+@keyframes peis-breathe {
+  0%, 100% { opacity: 0.20; transform: scale(1); }
+  50%      { opacity: 0.50; transform: scale(1.04); }
+}
+
+@keyframes peis-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.06); }
+}
+
+@keyframes peis-wave-out {
+  0%   { opacity: 0.55; transform: scale(0.6); }
+  80%  { opacity: 0.0;  transform: scale(2.6); }
+  100% { opacity: 0.0;  transform: scale(2.6); }
+}
+
+/* Synced glow on the big level number for the critical tier. */
+.peis-number-critical {
+  animation: peis-number-glow 0.6s ease-in-out infinite;
+}
+@keyframes peis-number-glow {
+  0%, 100% { text-shadow: 0 2px 24px rgba(0, 0, 0, 0.22); }
+  50%      { text-shadow: 0 0 28px rgba(255, 255, 255, 0.85), 0 2px 24px rgba(0, 0, 0, 0.30); }
+}
+
+/* Accessibility: honor reduced-motion. Suppress all PEIS motion and instead
+   show a steady, saturated inset ring for the critical tier so the alert stays
+   legible without animation. */
+@media (prefers-reduced-motion: reduce) {
+  .peis-glow,
+  .peis-wave,
+  .peis-number-critical {
+    animation: none !important;
+  }
+  .peis-glow.elevated { opacity: 0.30; }
+  .peis-glow.critical { opacity: 0.45; }
+  .peis-signal-critical {
+    box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.7),
+                inset 0 0 40px rgba(0, 0, 0, 0.25);
+  }
+}
