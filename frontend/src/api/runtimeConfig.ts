@@ -16,6 +16,7 @@ const ENV_FALLBACK =
   (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3000';
 
 let apiBase: string | null = null;
+let sourceApiBase: string | null = null;
 
 /**
  * Fetch `config.json` once and derive the base URL. Never throws — on any
@@ -45,10 +46,26 @@ export async function loadRuntimeConfig(): Promise<void> {
 }
 
 /**
- * Resolved backend base URL (`http://{ip}:{port}`) used for both REST (axios)
+ * Resolved backend base URL (`http://{ip}:{port}`) used for both REST (fetch)
  * and Socket.IO. Resolves lazily to the env/localhost fallback if
  * loadRuntimeConfig() has not completed, so nothing breaks.
  */
 export function getApiBase(): string {
   return apiBase ?? ENV_FALLBACK;
+}
+
+export function setSourceApiBase(baseUrl: string | null): void {
+  sourceApiBase = baseUrl;
+  if (sourceApiBase) {
+    console.log('[runtimeConfig] source base =', sourceApiBase);
+  }
+}
+
+export function setSourceApiBaseFromConfig(config: { ctrlip?: string; ctrlport?: number | string }): void {
+  if (!config.ctrlip || !config.ctrlport) return;
+  setSourceApiBase(`http://${config.ctrlip}:${config.ctrlport}`);
+}
+
+export function getSourceApiBase(): string {
+  return sourceApiBase ?? getApiBase();
 }

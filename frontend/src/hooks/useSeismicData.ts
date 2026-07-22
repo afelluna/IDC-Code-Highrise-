@@ -89,16 +89,30 @@ export const useSeismicData = (): UseSeismicDataState & UseSeismicDataActions =>
       // /getAllHistoryMax is still fine for EventList.tsx's on-demand admin load.
       // /getHistory (non-Max) scans eventMax as per-event DIRECTORIES (legacy
       // layout) and returns nothing on the RPi — don't use that one either.
-      const response = await seismicApi.getHistoryMax();
+      const configResponse = await seismicApi.getSensorConfig();
+      const assignedNode = (configResponse.data as any)?.node_name;
+      const response = await seismicApi.getSeismicEvents();
       const d = response.data as any;
-      const history = d?.history || [];
-      // Prefer the backend's true total; fall back to the (capped) page length
-      // for older backends that don't send totalEvents.
-      const totalEvents = typeof d?.totalEvents === 'number'
-        ? d.totalEvents
-        : (typeof d?.uploadedCount === 'number' && typeof d?.unuploadedCount === 'number'
-            ? d.uploadedCount + d.unuploadedCount
-            : history.length);
+      const rawHistory = d?.history || [];
+      const assignedHistory = assignedNode
+        ? rawHistory.filter((event: any) => event.node_name === assignedNode)
+        : rawHistory;
+      const history = assignedHistory.map((event: any, index: number) => {
+        const x = Number(event.x_max ?? event.x ?? 0);
+        const y = Number(event.y_max ?? event.y ?? 0);
+        const z = Number(event.z_max ?? event.z ?? 0);
+        const timestamp = event.created_at || event.timestamp || new Date().toISOString();
+
+        return {
+          id: event.event_unique_id || event.id || `${timestamp}-${index}`,
+          intensity: Number(event.intensity_max ?? event.intensity ?? 0),
+          acceleration: Math.sqrt(x * x + y * y + z * z),
+          timestamp,
+          device_id: event.node_name || assignedNode || 'sensor',
+          created_at: timestamp,
+        };
+      });
+      const totalEvents = history.length;
       setState(prev => ({ ...prev, history, totalEvents, error: null }));
     } catch (error) {
       if (useMocks) {
@@ -122,45 +136,19 @@ export const useSeismicData = (): UseSeismicDataState & UseSeismicDataActions =>
   }, []);
 
   const refreshStats = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await seismicApi.getStorageInfo();
-      const storageData = response.data as any;
-      
-      const GB = 1024 * 1024 * 1024;
-      
-      setState(prev => ({ 
-        ...prev, 
-        stats: {
-          total_alerts: prev.totalEvents,
-          critical_alerts: prev.history.filter((a: any) => a.intensity >= 7).length,
-          last_alert: prev.history[0]?.timestamp || null,
-          storage_used: (storageData.sizeByte - storageData.freeByte) / GB,
-          storage_total: storageData.sizeByte / GB,
-          devices_online: 1,
-          devices_total: 1
-        }, 
-        error: null, 
-      }));
-    } catch (error) {
-      if (useMocks) {
-        setState(prev => ({
-          ...prev,
-          stats: {
-            total_alerts: 156,
-            critical_alerts: 12,
-            last_alert: new Date().toISOString(),
-            storage_used: 1.2,
-            storage_total: 2.0,
-            devices_online: 1,
-            devices_total: 1,
-          },
-          error: null
-        }));
-      } else {
-        setError(error as ApiError);
-      }
-    }
+    setState(prev => ({
+      ...prev,
+      stats: {
+        total_alerts: prev.totalEvents,
+        critical_alerts: prev.history.filter((a: any) => a.intensity >= 7).length,
+        last_alert: prev.history[0]?.timestamp || null,
+        storage_used: 0,
+        storage_total: 0,
+        devices_online: prev.currentData ? 1 : 0,
+        devices_total: 1,
+      },
+      error: null,
+    }));
   }, []);
 
   const refreshAll = useCallback(async () => {

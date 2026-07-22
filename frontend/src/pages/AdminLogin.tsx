@@ -1,7 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, User, Loader2 } from 'lucide-react';
 import { Card } from '../components/ui/Card';
+import { Icon } from '../components/ui/Icon';
 import { useAuth } from '../auth/useAuth';
 import usherMarker from '../assets/usher-marker.svg';
 
@@ -55,7 +55,7 @@ export default function AdminLogin() {
           <div className="flex flex-col items-center text-center gap-2">
             <div
               className="flex items-center justify-center rounded-xl px-3 h-12"
-              style={{ background: 'linear-gradient(135deg, var(--brand) 0%, #3a5a70 100%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--brand) 0%, var(--brand-gradient-end) 100%)' }}
             >
               <img src={usherMarker} alt="USHER" className="h-6 w-auto brightness-0 invert" />
             </div>
@@ -74,7 +74,7 @@ export default function AdminLogin() {
                 Username
               </span>
               <div className="relative">
-                <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Icon name="user" size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                 <input
                   type="text"
                   autoComplete="username"
@@ -95,7 +95,7 @@ export default function AdminLogin() {
                 Password
               </span>
               <div className="relative">
-                <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Icon name="lock" size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                 <input
                   type="password"
                   autoComplete="current-password"
@@ -124,9 +124,9 @@ export default function AdminLogin() {
               type="submit"
               disabled={loading || !username || !password}
               className="mt-1 w-full rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-2 transition-opacity disabled:opacity-50"
-              style={{ backgroundColor: 'var(--brand)', color: '#ffffff' }}
+              style={{ backgroundColor: 'var(--brand)', color: 'var(--text-on-accent)' }}
             >
-              {loading && <Loader2 size={15} className="animate-spin" />}
+              {loading && <Icon name="loader" size={15} className="animate-spin" />}
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>

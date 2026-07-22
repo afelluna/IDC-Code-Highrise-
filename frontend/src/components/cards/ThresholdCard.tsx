@@ -29,22 +29,19 @@ interface RowProps {
 
 function Row({ color, bg, icon, label, value }: RowProps) {
   return (
-    <div
-      className="summary-card flex items-center gap-3 px-3"
-      style={{ borderLeft: `3px solid ${color}` }}
-    >
-      <div
-        className="flex items-center justify-center rounded-lg shrink-0"
-        style={{ width: 34, height: 34, backgroundColor: bg, color }}
-      >
-        {icon}
-      </div>
-      <div className="min-w-0 flex-1">
+    <div className="summary-card flex flex-col justify-center px-3 py-2 min-h-0">
+      <div className="min-w-0">
         <p
-          className="text-[10px] font-semibold uppercase tracking-widest leading-none mb-1"
+          className="flex items-start gap-2 text-[11px] font-bold uppercase leading-tight mb-1"
           style={{ color: 'var(--text-secondary)' }}
         >
-          {label}
+          <span
+            className="flex items-center justify-center rounded-md shrink-0"
+            style={{ width: 24, height: 24, backgroundColor: bg, color }}
+          >
+            {icon}
+          </span>
+          <span className="min-w-0 leading-tight">{label}</span>
         </p>
         {value}
       </div>
@@ -56,18 +53,21 @@ export function ThresholdCard() {
   const [config, setConfig] = useState<ThresholdConfig | null>(null);
 
   useEffect(() => {
-    seismicApi.getSensorConfig()
+    seismicApi.getSourceSettings()
       .then((res) => {
         if (res.success && res.data) {
           const d = res.data as any;
-          setConfig({
-            warning: Number(d.warning ?? 0),
-            warrant: Number(d.warrant ?? 0),
-          });
+          const warning = Number(d.warning);
+          const warrant = Number(d.warrant);
+          if (Number.isFinite(warning) && Number.isFinite(warrant)) {
+            setConfig({ warning, warrant });
+          }
         }
       })
       .catch(() => {/* monitor keeps running without threshold info */});
   }, []);
+
+  if (!config) return null;
 
   return (
     <div className="h-full flex flex-col gap-1.5">
@@ -82,11 +82,11 @@ export function ThresholdCard() {
         {/* WARRANT 1 */}
         <Row
           color="var(--status-warn)"
-          bg="rgba(201,154,84,0.14)"
+          bg="rgba(251,191,36,0.14)"
           icon={<IconAlert />}
           label="Warrant 1"
           value={
-            <p className="font-mono text-[15px] font-bold leading-none" style={{ color: 'var(--status-warn)' }}>
+            <p className="font-mono text-lg font-bold leading-none" style={{ color: 'var(--status-warn)' }}>
               PEIS {config ? config.warning : '—'}
             </p>
           }
@@ -95,11 +95,11 @@ export function ThresholdCard() {
         {/* WARRANT 2 */}
         <Row
           color="var(--status-error)"
-          bg="rgba(193,96,92,0.14)"
+          bg="rgba(248,113,113,0.14)"
           icon={<IconShield />}
           label="Warrant 2"
           value={
-            <p className="font-mono text-[15px] font-bold leading-none" style={{ color: 'var(--status-error)' }}>
+            <p className="font-mono text-lg font-bold leading-none" style={{ color: 'var(--status-error)' }}>
               PEIS {config ? config.warrant : '—'}
             </p>
           }

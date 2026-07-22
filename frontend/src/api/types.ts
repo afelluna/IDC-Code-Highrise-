@@ -7,11 +7,14 @@ export interface BackendResponse<T> {
 }
 
 export interface SensorConfig {
-  warning: number;
-  warrant: number;
-  xthold: number;
-  ythold: number;
-  zthold: number;
+  node_name?: string;
+  ctrlip?: string;
+  ctrlport?: number;
+  warning?: number;
+  warrant?: number;
+  xthold?: number;
+  ythold?: number;
+  zthold?: number;
   admin_def_username?: string;
   admin_def_pass?: string;
 }
@@ -90,7 +93,7 @@ export interface VelocityResponse {
 
 // WebSocket Events
 export interface SeismicEvent {
-  type: 'seismic.alert' | 'seismic.update' | 'device.status';
+  type: 'seismic.alert' | 'seismic.update' | 'device.status' | 'thresholds.updated';
   data: SeismicDataResponse | SeismicHistoryResponse | any;
   timestamp: string;
 }

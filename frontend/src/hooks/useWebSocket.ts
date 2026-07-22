@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 // socket.io-client v2.x (matches the server's socket.io@^2.3.0 / EIO=3)
 import io from 'socket.io-client';
 import seismicApi from '../api/seismicApi';
-import { getApiBase } from '../api/runtimeConfig';
-import { peisFromAccel, loadPeisBoundaries } from '../constants/peisConfig';
+import { getSourceApiBase } from '../api/runtimeConfig';
 
 // Extract just the hostname/IP from a URL string (e.g. "http://192.168.10.12:3000" → "192.168.10.12")
 function extractHost(url: string): string {
@@ -11,6 +10,16 @@ function extractHost(url: string): string {
 }
 
 import type { SeismicEvent } from '../api/types';
+
+// Sensor batches ~125 samples per ~250ms (~500 samples/sec native). Scanning
+// every raw sample for the batch peak (below) and forwarding all of them to
+// the chart is more CPU than the RPi4 kiosk needs — decimate once, here,
+// before either consumer sees the batch. Batches still arrive every ~250ms
+// so the graph and intensity display stay live; each update just carries
+// fewer points. Drop to 4 (125 sps) instead of 2 if 250 is still too heavy.
+const NATIVE_SPS = 500;
+const TARGET_SPS = 250;
+const DECIMATION = Math.max(1, Math.round(NATIVE_SPS / TARGET_SPS));
 
 interface UseWebSocketState {
   connected: boolean;
@@ -36,9 +45,6 @@ export const useWebSocket = (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const socketRef = useRef<any>(null);
   const onEventRef = useRef(onSeismicEvent);
-  // Admin-configurable PEIS cutoffs, read once from localStorage on mount.
-  // The monitor picks up /admin edits on its next reload (kiosk-acceptable).
-  const boundariesRef = useRef<number[]>(loadPeisBoundaries());
 
   // Keep ref updated to avoid stale closures in listeners
   useEffect(() => {
@@ -63,23 +69,24 @@ export const useWebSocket = (
       try {
         // 1. GET /getSensorConfig → get nodeName + actual device IP
         const response = await seismicApi.getSensorConfig();
-        const nodename = (response.data as any).node_name;
-        const server_ip = (response.data as any).server_ip || null;
+        const config = response.data as any;
+        const nodename = config.node_name;
+        const sourceUrl = getSourceApiBase();
+        const server_ip = config.ctrlip || config.server_ip || extractHost(sourceUrl);
 
         if (!isMounted) return;
 
         // server_ip comes from os.networkInterfaces() on the RPi; fall back to
         // the IP already in config.json if the backend doesn't return it yet.
-        const resolvedIp = server_ip || extractHost(getApiBase());
         setState(prev => ({
           ...prev,
           nodeName: nodename || prev.nodeName,
-          serverIp: resolvedIp || prev.serverIp,
+          serverIp: server_ip || prev.serverIp,
         }));
 
         // 2. Connect Socket.IO to the same backend host:port resolved from
         //    the runtime config (config.json), as the old Angular app did.
-        const wsUrl = getApiBase();
+        const wsUrl = sourceUrl;
         const socket = io(wsUrl, {
           transports: ['websocket', 'polling'],
         }) as any;
@@ -109,7 +116,13 @@ export const useWebSocket = (
             const raw = typeof data === 'string' ? JSON.parse(data) : data;
             if (!Array.isArray(raw) || raw.length === 0) return;
 
-            const samples = raw.map((s: any[]) => ({
+            // Decimate before mapping so neither the peak scan nor the chart
+            // ever touches the full native-rate array — see DECIMATION above.
+            const decimatedRaw = raw.length > DECIMATION
+              ? raw.filter((_: any, i: number) => i % DECIMATION === 0)
+              : raw;
+
+            const samples = decimatedRaw.map((s: any[]) => ({
               timestamp: s[1],
               x: s[2],
               y: s[3],
@@ -117,18 +130,31 @@ export const useWebSocket = (
               intensity: s[5],
             }));
 
-            // Sensor always hardcodes intensity=2. Calculate PEIS from peak
-            // acceleration magnitude across all 125 samples in the batch, using
-            // the admin-configured boundaries (peisConfig.ts).
-            const peakAccel = Math.max(...samples.map(s =>
-              Math.sqrt(s.x * s.x + s.y * s.y + s.z * s.z)
-            ));
-            const intensity = peisFromAccel(peakAccel, boundariesRef.current);
+            // Sensor firmware is the single source of truth for PEIS — index 5
+            // of each sample is its computed intensity. No client-side
+            // recalculation from x/y/z thresholds — but a batch spans ~125
+            // samples (~250ms), so a transient spike can land mid-batch and
+            // decay back down by the last sample. Taking only the last
+            // sample's intensity/x/y/z silently drops that spike — the
+            // display never shows or holds the peak that actually crossed a
+            // warrant threshold. Scan the whole batch for its peak sample
+            // (by acceleration magnitude, matching how intensity escalates)
+            // and report that one sample's x/y/z, intensity, and peakAccel
+            // together — every displayed readout (X/Y/Z, GND, PEIS) must come
+            // from the exact same sample, never mixed across two samples.
+            let peak = samples[samples.length - 1];
+            let peakAccel = Math.sqrt(peak.x ** 2 + peak.y ** 2 + peak.z ** 2);
+            for (const s of samples) {
+              const mag = Math.sqrt(s.x ** 2 + s.y ** 2 + s.z ** 2);
+              if (mag > peakAccel) {
+                peakAccel = mag;
+                peak = s;
+              }
+            }
 
-            const latest = samples[samples.length - 1];
             const seismicEvent: SeismicEvent = {
               type: 'seismic.update',
-              data: { ...latest, intensity, peakAccel, samples },
+              data: { ...peak, peakAccel, samples },
               timestamp: new Date().toISOString(),
             };
             if (isMounted) setState(prev => ({ ...prev, lastEvent: seismicEvent }));
@@ -136,6 +162,19 @@ export const useWebSocket = (
           } catch {
             // ignore malformed packets
           }
+        });
+
+        // Admin's threshold save (ConfigController.updateIntensity) broadcasts
+        // this so an already-open dashboard updates its warrant tiers right
+        // away instead of waiting for the next reload.
+        socket.on('thresholds_updated', (payload: any) => {
+          const seismicEvent: SeismicEvent = {
+            type: 'thresholds.updated',
+            data: payload,
+            timestamp: new Date().toISOString(),
+          };
+          if (isMounted) setState(prev => ({ ...prev, lastEvent: seismicEvent }));
+          if (onEventRef.current) onEventRef.current(seismicEvent);
         });
 
         // 4. socket.on('newfirstalarm', (nodeName) => ...)

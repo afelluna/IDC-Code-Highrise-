@@ -1,140 +1,128 @@
 import apiClient from './client';
+import { getSourceApiBase, setSourceApiBaseFromConfig } from './runtimeConfig';
+import io from 'socket.io-client';
 import type {
   BackendResponse,
   SensorConfig,
 } from './types';
-import { createFallbackHistoryResponse, createFallbackStorageResponse, normalizeSensorConfig } from './compat';
+
+async function getSensorConfig(): Promise<BackendResponse<SensorConfig>> {
+  const response = await apiClient.get<SensorConfig>('/getSensorConfig');
+  setSourceApiBaseFromConfig(response.data || {});
+  return response;
+}
+
+async function getSourceSettings(): Promise<BackendResponse<any>> {
+  const configResponse = await getSensorConfig();
+  const nodeName = configResponse.data?.node_name;
+  const sourceUrl = getSourceApiBase();
+
+  try {
+    const response = await apiClient.get<any>(
+      '/getIntensitySettings',
+      undefined,
+      { baseUrl: sourceUrl },
+    );
+    const data = response.data || {};
+    return {
+      ...response,
+      data: {
+        ...data,
+        warning: data.warning ?? data.warning_min,
+        warrant: data.warrant ?? data.alert_min,
+      },
+    };
+  } catch {
+    // Older MDC builds also expose settings through Socket.IO.
+  }
+
+  return new Promise((resolve, reject) => {
+    const socket = io(sourceUrl, {
+      transports: ['websocket', 'polling'],
+    }) as any;
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      socket.disconnect();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject({ message: 'Timed out waiting for MDC settings', status: 408 });
+    }, 8000);
+
+    socket.on('connect', () => {
+      socket.emit('request_settings', [nodeName || '']);
+    });
+
+    socket.on('fetch_settings', (settings: any) => {
+      cleanup();
+      resolve({
+        success: true,
+        message: 'MDC settings fetched',
+        data: settings,
+      });
+    });
+
+    socket.on('connect_error', (err: any) => {
+      cleanup();
+      reject({
+        message: err?.message || 'Could not connect to MDC settings socket',
+        status: 500,
+      });
+    });
+  });
+}
 
 export const seismicApi = {
-  // Get sensor configuration (thresholds, etc.)
-  getSensorConfig: async (): Promise<BackendResponse<SensorConfig>> => {
-    try {
-      const res = await apiClient.get('/getSensorConfig');
-      const data = res.data as any;
-      return {
-        ...res,
-        data: normalizeSensorConfig(data, data),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: 'Could not reach the device.',
-        data: normalizeSensorConfig({}, {}),
-      };
-    }
-  },
+  // IDC configuration. In Highrise this also contains the MDC source
+  // endpoint ({ ctrlip, ctrlport }) for live sensor data.
+  getSensorConfig,
 
-  // Get seismic events history
+  // MDC settings include Highrise threshold values (warning/warrant).
+  getSourceSettings,
+
+  // Highrise event history lives on the MDC/gateway, not the IDC controller.
   getSeismicEvents: async (): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.get('/getHistory');
-    } catch {
-      return {
-        success: true,
-        message: 'Using empty history fallback.',
-        data: createFallbackHistoryResponse(),
-      };
-    }
+    await getSensorConfig();
+    return apiClient.get('/getAllHistory', undefined, { baseUrl: getSourceApiBase() });
   },
 
   // Get maximum intensity history (paged)
-  getHistoryMax: async (): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.get('/getHistoryMax');
-    } catch {
-      return {
-        success: true,
-        message: 'Using empty history fallback.',
-        data: createFallbackHistoryResponse(),
-      };
-    }
-  },
+  getHistoryMax: (): Promise<BackendResponse<any>> =>
+    apiClient.get('/getHistoryMax'),
 
   // Get all maximum intensity history
-  getAllHistoryMax: async (): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.get('/getAllHistoryMax');
-    } catch {
-      return {
-        success: true,
-        message: 'Using empty history fallback.',
-        data: createFallbackHistoryResponse(),
-      };
-    }
-  },
+  getAllHistoryMax: (): Promise<BackendResponse<any>> =>
+    apiClient.get('/getAllHistoryMax', undefined, { timeout: 180000 }),
 
   // Get storage/disk space information
-  getStorageInfo: async (): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.get('/getDiskSpace');
-    } catch {
-      return {
-        success: true,
-        message: 'Using empty storage fallback.',
-        data: createFallbackStorageResponse(),
-      };
-    }
-  },
+  getStorageInfo: (): Promise<BackendResponse<any>> =>
+    apiClient.get('/getDiskSpace'),
 
   // Update intensity thresholds
-  updateThresholds: async (payload: {
+  updateThresholds: (payload: {
     warning: number;
     warrant: number;
     xthold: number;
     ythold: number;
     zthold: number;
-  }): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.post('/updateIntensity', payload);
-    } catch {
-      return {
-        success: false,
-        message: 'Threshold update is not supported by the current backend.',
-        data: null,
-      };
-    }
-  },
+  }): Promise<BackendResponse<any>> =>
+    apiClient.post('/updateIntensity', payload),
 
   // Calibrate the sensor
-  calibrate: async (): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.post('/calibrate');
-    } catch {
-      return {
-        success: false,
-        message: 'Calibration is not supported by the current backend.',
-        data: null,
-      };
-    }
-  },
+  calibrate: (): Promise<BackendResponse<any>> =>
+    apiClient.post('/calibrate'),
 
   // Tech-support admin login. Backend plaintext-compares against
   // config_tbl.admin_def_username / admin_def_pass. After the client.ts
   // interceptor normalizes the response, a valid login is `success === true`.
-  loginUser: async (username: string, password: string): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.post('/loginUser', { username, password });
-    } catch {
-      return {
-        success: false,
-        message: 'Login endpoint is not available on the current backend.',
-        data: null,
-      };
-    }
-  },
+  loginUser: (username: string, password: string): Promise<BackendResponse<any>> =>
+    apiClient.post('/loginUser', { username, password }),
 
   // Change the device admin password (config_tbl.admin_def_pass).
-  changePassword: async (newpassword: string): Promise<BackendResponse<any>> => {
-    try {
-      return await apiClient.post('/changePass', { newpassword });
-    } catch {
-      return {
-        success: false,
-        message: 'Password change is not available on the current backend.',
-        data: null,
-      };
-    }
-  },
+  changePassword: (newpassword: string): Promise<BackendResponse<any>> =>
+    apiClient.post('/changePass', { newpassword }),
 
   // Get waveform data before an event
   getWaveformBefore: (eventId: string, path: string): Promise<BackendResponse<any>> =>
