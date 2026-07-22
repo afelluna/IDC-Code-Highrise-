@@ -12,6 +12,16 @@ async function getSensorConfig(): Promise<BackendResponse<SensorConfig>> {
   return response;
 }
 
+function normalizeSourceSettings(data: any) {
+  return {
+    ...data,
+    warning: data.warning ?? data.warning_min,
+    warrant: data.warrant ?? data.alert_min,
+    before: data.before ?? data.tbefore,
+    after: data.after ?? data.tafter,
+  };
+}
+
 async function getSourceSettings(): Promise<BackendResponse<any>> {
   const configResponse = await getSensorConfig();
   const nodeName = configResponse.data?.node_name;
@@ -26,11 +36,7 @@ async function getSourceSettings(): Promise<BackendResponse<any>> {
     const data = response.data || {};
     return {
       ...response,
-      data: {
-        ...data,
-        warning: data.warning ?? data.warning_min,
-        warrant: data.warrant ?? data.alert_min,
-      },
+      data: normalizeSourceSettings(data),
     };
   } catch {
     // Older MDC builds also expose settings through Socket.IO.
@@ -60,7 +66,7 @@ async function getSourceSettings(): Promise<BackendResponse<any>> {
       resolve({
         success: true,
         message: 'MDC settings fetched',
-        data: settings,
+        data: normalizeSourceSettings(settings || {}),
       });
     });
 

@@ -108,13 +108,17 @@ export default function MonitorPage() {
   // is unreachable.
   const [warningLevel, setWarningLevel] = useState(5);
   const [alertLevel, setAlertLevel] = useState(8);
+  const DEFAULT_HOLD_MS = 22000;
+  const [holdMs, setHoldMs] = useState(DEFAULT_HOLD_MS);
 
   const applyThresholds = (d: any) => {
     const warn = Number(d.warning);
     const alert = Number(d.warrant);
+    const holdSeconds = Number(d.after ?? d.tafter);
     if (Number.isFinite(warn) && warn > 0) setWarningLevel(warn);
     // Keep alert at or above warning so tiers stay ordered.
     if (Number.isFinite(alert) && alert > 0) setAlertLevel(Math.max(alert, warn || alert));
+    if (Number.isFinite(holdSeconds) && holdSeconds > 0) setHoldMs(holdSeconds * 1000);
   };
 
   useEffect(() => {
@@ -126,14 +130,10 @@ export default function MonitorPage() {
   }, []);
 
   // ─── Peak-hold display intensity ─────────────────────────────────────────
-  // Mirrors the original RPi frontend: when PEIS rises, hold the peak level
-  // for HOLD_MS before decaying to the current live level. Without this a
+  // Hold PEIS for the MDC event tail window. Without this a
   // 1-2 batch tap (~1s) flashes and disappears before the user can read it.
-  // The hold matches the backend buzzer/relay alarm window exactly:
-  // RpiModule.startRelaiInterval ticks every 1000ms starting at counter=1 and
-  // shuts the relay off on the tick where counter > 7 — i.e. the 8th tick,
-  // ~8s after trigger. Keep HOLD_MS in sync with that logic if it changes.
-  const HOLD_MS = 8000;
+  // The hold follows the MDC `after`/`tafter` setting so it stays active
+  // until the gateway event/buzzer window completes.
   const [displayIntensity, setDisplayIntensity] = useState(0);
   const holdTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peakHeldRef   = useRef(0);
@@ -151,9 +151,15 @@ export default function MonitorPage() {
       holdTimerRef.current = setTimeout(() => {
         peakHeldRef.current = 0;
         setDisplayIntensity(liveIntRef.current);
-      }, HOLD_MS);
+      }, holdMs);
     }
-  }, [currentData?.intensity]);
+  }, [currentData?.intensity, holdMs]);
+
+  useEffect(() => {
+    return () => {
+      if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+    };
+  }, []);
 
   // ─── Derived values ───────────────────────────────────────────────────────
   const noOfEvents    = totalEvents;

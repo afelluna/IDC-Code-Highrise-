@@ -116,6 +116,11 @@ export const useWebSocket = (
             const raw = typeof data === 'string' ? JSON.parse(data) : data;
             if (!Array.isArray(raw) || raw.length === 0) return;
 
+            const batchIntensity = raw.reduce((max: number, s: any[]) => {
+              const level = Number(s?.[5]);
+              return Number.isFinite(level) && level > max ? level : max;
+            }, 0);
+
             // Decimate before mapping so neither the peak scan nor the chart
             // ever touches the full native-rate array — see DECIMATION above.
             const decimatedRaw = raw.length > DECIMATION
@@ -154,7 +159,7 @@ export const useWebSocket = (
 
             const seismicEvent: SeismicEvent = {
               type: 'seismic.update',
-              data: { ...peak, peakAccel, samples },
+              data: { ...peak, intensity: batchIntensity || peak.intensity, peakAccel, samples },
               timestamp: new Date().toISOString(),
             };
             if (isMounted) setState(prev => ({ ...prev, lastEvent: seismicEvent }));
