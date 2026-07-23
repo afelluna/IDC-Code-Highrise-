@@ -80,6 +80,37 @@ async function getSourceSettings(): Promise<BackendResponse<any>> {
   });
 }
 
+function normalizeHistoryRows(history: any[], nodeName?: string) {
+  return history
+    .filter((event) => !nodeName || !event.node_name || event.node_name === nodeName)
+    .map((event) => ({
+      ...event,
+      event_unique_id: event.event_unique_id || String(event.warn_id || event.created_at),
+      path: event.path || event.source_file || event.event_unique_id || '',
+      status: event.status || 'recorded',
+      intensity: Number(event.intensity_max ?? event.intensity ?? 0),
+      timestamp: new Date(event.created_at || event.timestamp || 0).getTime(),
+    }));
+}
+
+async function getSourceHistory(): Promise<BackendResponse<any>> {
+  const configResponse = await getSensorConfig();
+  const nodeName = configResponse.data?.node_name;
+  const response = await apiClient.get<any>(
+    '/getAllHistory',
+    undefined,
+    { baseUrl: getSourceApiBase(), timeout: 180000 },
+  );
+  const data = response.data || {};
+  return {
+    ...response,
+    data: {
+      ...data,
+      history: normalizeHistoryRows(data.history || [], nodeName),
+    },
+  };
+}
+
 export const seismicApi = {
   // IDC configuration. In Highrise this also contains the MDC source
   // endpoint ({ ctrlip, ctrlport }) for live sensor data.
@@ -89,18 +120,12 @@ export const seismicApi = {
   getSourceSettings,
 
   // Highrise event history lives on the MDC/gateway, not the IDC controller.
-  getSeismicEvents: async (): Promise<BackendResponse<any>> => {
-    await getSensorConfig();
-    return apiClient.get('/getAllHistory', undefined, { baseUrl: getSourceApiBase() });
-  },
+  getSeismicEvents: getSourceHistory,
 
-  // Get maximum intensity history (paged)
-  getHistoryMax: (): Promise<BackendResponse<any>> =>
-    apiClient.get('/getHistoryMax'),
+  // Current MDC builds expose history through one canonical endpoint.
+  getHistoryMax: getSourceHistory,
 
-  // Get all maximum intensity history
-  getAllHistoryMax: (): Promise<BackendResponse<any>> =>
-    apiClient.get('/getAllHistoryMax', undefined, { timeout: 180000 }),
+  getAllHistoryMax: getSourceHistory,
 
   // Get storage/disk space information
   getStorageInfo: (): Promise<BackendResponse<any>> =>
@@ -119,16 +144,6 @@ export const seismicApi = {
   // Calibrate the sensor
   calibrate: (): Promise<BackendResponse<any>> =>
     apiClient.post('/calibrate'),
-
-  // Tech-support admin login. Backend plaintext-compares against
-  // config_tbl.admin_def_username / admin_def_pass. After the client.ts
-  // interceptor normalizes the response, a valid login is `success === true`.
-  loginUser: (username: string, password: string): Promise<BackendResponse<any>> =>
-    apiClient.post('/loginUser', { username, password }),
-
-  // Change the device admin password (config_tbl.admin_def_pass).
-  changePassword: (newpassword: string): Promise<BackendResponse<any>> =>
-    apiClient.post('/changePass', { newpassword }),
 
   // Get waveform data before an event
   getWaveformBefore: (eventId: string, path: string): Promise<BackendResponse<any>> =>

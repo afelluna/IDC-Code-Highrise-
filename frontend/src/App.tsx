@@ -2,11 +2,9 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 import MonitorPage from './pages/MonitorPage';
-import { RequireAuth } from './auth/RequireAuth';
 
 // Admin area is maintenance-only and never reached on the kiosk monitor, so
 // split it out of the main bundle and load it on demand.
-const AdminLogin = lazy(() => import('./pages/AdminLogin'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 export default function App() {
@@ -21,15 +19,7 @@ export default function App() {
           <Route path="/" element={<MonitorPage />} />
 
           {/* Tech-support area (deployment/maintenance only) */}
-          <Route path="/admin/login" element={<AdminLogin />} />
-          <Route
-            path="/admin"
-            element={
-              <RequireAuth>
-                <AdminPage />
-              </RequireAuth>
-            }
-          />
+          <Route path="/admin" element={<AdminPage />} />
 
           {/* Unknown routes fall back to the monitor */}
           <Route path="*" element={<Navigate to="/" replace />} />

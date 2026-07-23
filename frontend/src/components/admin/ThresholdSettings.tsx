@@ -1,46 +1,61 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { Card } from '../ui/Card';
 import { Icon } from '../ui/Icon';
 import { seismicApi } from '../../api/seismicApi';
 
-type Fields = 'warning' | 'warrant' | 'xthold' | 'ythold' | 'zthold';
+interface SettingRow {
+  label: string;
+  value: string;
+  unit?: string;
+}
 
-const FIELD_META: { key: Fields; label: string; hint: string; step: string }[] = [
-  { key: 'warning', label: 'Warning level', hint: 'PEIS level that raises a warning', step: '1' },
-  { key: 'warrant', label: 'Alert level', hint: 'PEIS level that raises an alert', step: '1' },
-  { key: 'xthold', label: 'X threshold', hint: 'X-axis acceleration threshold (g)', step: '0.0001' },
-  { key: 'ythold', label: 'Y threshold', hint: 'Y-axis acceleration threshold (g)', step: '0.0001' },
-  { key: 'zthold', label: 'Z threshold', hint: 'Z-axis acceleration threshold (g)', step: '0.0001' },
-];
+function formatNumber(value: unknown, fallback = '--') {
+  const n = Number(value);
+  return Number.isFinite(n) ? String(n) : fallback;
+}
 
-type FormState = Record<Fields, string>;
+function buildRows(data: any): SettingRow[] {
+  const rows: SettingRow[] = [
+    { label: 'Warning level', value: formatNumber(data?.warning), unit: 'PEIS' },
+    { label: 'Alert level', value: formatNumber(data?.warrant), unit: 'PEIS' },
+    { label: 'Before window', value: formatNumber(data?.before), unit: 'sec' },
+    { label: 'After window', value: formatNumber(data?.after), unit: 'sec' },
+  ];
 
-const EMPTY: FormState = { warning: '', warrant: '', xthold: '', ythold: '', zthold: '' };
+  for (const [key, label] of [
+    ['xthold', 'X threshold'],
+    ['ythold', 'Y threshold'],
+    ['zthold', 'Z threshold'],
+  ] as const) {
+    if (data?.[key] !== undefined && data?.[key] !== null) {
+      rows.push({ label, value: formatNumber(data[key]), unit: 'g' });
+    }
+  }
+
+  return rows;
+}
 
 export function ThresholdSettings() {
-  const [form, setForm] = useState<FormState>(EMPTY);
+  const [rows, setRows] = useState<SettingRow[]>(() => buildRows(null));
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [lastLoaded, setLastLoaded] = useState<string | null>(null);
 
   const loadConfig = async () => {
     setLoading(true);
+    setMessage(null);
     try {
-      const res = await seismicApi.getSensorConfig();
+      const res = await seismicApi.getSourceSettings();
       if (res.success && res.data) {
-        const d = res.data as any;
-        setForm({
-          warning: String(d.warning ?? ''),
-          warrant: String(d.warrant ?? ''),
-          xthold: String(d.xthold ?? ''),
-          ythold: String(d.ythold ?? ''),
-          zthold: String(d.zthold ?? ''),
-        });
+        setRows(buildRows(res.data));
+        setLastLoaded(new Date().toLocaleTimeString());
       } else {
-        setMessage({ type: 'err', text: res.message || 'Could not load current settings.' });
+        setRows(buildRows(null));
+        setMessage(res.message || 'MDC settings unavailable.');
       }
     } catch {
-      setMessage({ type: 'err', text: 'Could not reach the device.' });
+      setRows(buildRows(null));
+      setMessage('MDC settings unavailable.');
     } finally {
       setLoading(false);
     }
@@ -50,108 +65,77 @@ export function ThresholdSettings() {
     loadConfig();
   }, []);
 
-  const onChange = (key: Fields, value: string) => {
-    setForm((f) => ({ ...f, [key]: value }));
-  };
-
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (saving) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      const res = await seismicApi.updateThresholds({
-        warning: Number(form.warning),
-        warrant: Number(form.warrant),
-        xthold: Number(form.xthold),
-        ythold: Number(form.ythold),
-        zthold: Number(form.zthold),
-      });
-      if (res.success) {
-        setMessage({ type: 'ok', text: 'Thresholds updated.' });
-        // Re-fetch so the form reflects what the device actually stored.
-        await loadConfig();
-      } else {
-        setMessage({ type: 'err', text: res.message || 'Update failed.' });
-      }
-    } catch {
-      setMessage({ type: 'err', text: 'Could not reach the device.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const incomplete = Object.values(form).some((v) => v === '');
-
   return (
     <Card style={{ borderTop: '3px solid var(--brand)' }}>
       <div
-        className="px-4 py-3 flex items-center gap-2"
+        className="px-4 py-3 flex items-center justify-between gap-2"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
-        <Icon name="sliders-horizontal" size={16} style={{ color: 'var(--brand)' }} />
-        <h2 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
-          Intensity thresholds
-        </h2>
+        <div className="flex items-center gap-2">
+          <Icon name="sliders-horizontal" size={16} style={{ color: 'var(--brand)' }} />
+          <div className="flex flex-col leading-tight">
+            <h2 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+              MDC thresholds
+            </h2>
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              Read-only source settings
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={loadConfig}
+          disabled={loading}
+          title="Refresh MDC settings"
+          className="rounded-lg p-1.5 transition-opacity disabled:opacity-50"
+          style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+        >
+          <Icon name="refresh-cw" size={14} className={loading ? 'animate-spin' : ''} />
+        </button>
       </div>
 
-      <form onSubmit={onSubmit} className="p-4 flex flex-col gap-3">
-        {loading ? (
-          <div className="flex items-center gap-2 py-6 justify-center" style={{ color: 'var(--text-muted)' }}>
-            <Icon name="loader" size={16} className="animate-spin" /> Loading current settings…
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {FIELD_META.map(({ key, label, hint, step }) => (
-              <label key={key} className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
-                  {label}
-                </span>
-                <input
-                  type="number"
-                  step={step}
-                  required
-                  value={form[key]}
-                  onChange={(e) => onChange(key, e.target.value)}
-                  className="rounded-lg px-3 py-2 text-sm font-mono outline-none focus:ring-2"
-                  style={{
-                    backgroundColor: 'var(--bg-elevated)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-default)',
-                  }}
-                />
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{hint}</span>
-              </label>
-            ))}
-          </div>
-        )}
+      <div className="p-4 flex flex-col gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {rows.map((row) => (
+            <div
+              key={row.label}
+              className="rounded-lg px-3 py-2"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                border: '1px solid var(--border-default)',
+              }}
+            >
+              <span className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                {row.label}
+              </span>
+              <span className="mt-1 flex items-baseline gap-1 font-mono text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+                {row.unit === 'PEIS' && row.value !== '--' ? 'PEIS' : null}
+                <span>{row.value}</span>
+                {row.unit && row.unit !== 'PEIS' && row.value !== '--' ? (
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                    {row.unit}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="font-semibold uppercase tracking-wider">Source: MDC</span>
+          <span className="font-mono">{lastLoaded ? `Refreshed ${lastLoaded}` : 'Not refreshed'}</span>
+        </div>
 
         {message && (
           <p
             className="text-xs font-medium rounded-lg px-3 py-2 flex items-center gap-1.5"
-            style={
-              message.type === 'ok'
-                ? { backgroundColor: 'rgba(94,140,106,0.12)', color: 'var(--status-live)' }
-                : { backgroundColor: 'rgba(193,96,92,0.12)', color: 'var(--status-error)' }
-            }
+            style={{ backgroundColor: 'rgba(193,96,92,0.12)', color: 'var(--status-error)' }}
           >
-            {message.type === 'ok' && <Icon name="check" size={13} />}
-            {message.text}
+            <Icon name="alert-triangle" size={13} />
+            {message}
           </p>
         )}
-
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={saving || loading || incomplete}
-            className="rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 transition-opacity disabled:opacity-50"
-            style={{ backgroundColor: 'var(--brand)', color: 'var(--text-on-accent)' }}
-          >
-            {saving && <Icon name="loader" size={15} className="animate-spin" />}
-            {saving ? 'Saving…' : 'Save thresholds'}
-          </button>
-        </div>
-      </form>
+      </div>
     </Card>
   );
 }

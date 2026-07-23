@@ -23,7 +23,7 @@ export interface SeismogramHandle {
 // chart-only, to roughly 1 point per pixel — this never touches the
 // higher-fidelity stream used for intensity/threshold detection upstream.
 const INCOMING_SPS = 250; // must match useWebSocket.ts's TARGET_SPS
-const PLOT_SPS = 60;
+const PLOT_SPS = 90;
 const PLOT_DECIMATION = Math.max(1, Math.round(INCOMING_SPS / PLOT_SPS));
 const MAX_DATAPOINTS = PLOT_SPS * 10;
 
@@ -67,45 +67,47 @@ export const Seismogram = forwardRef<SeismogramHandle, SeismogramProps>(
     // to UplotReact as a stable reference (created once, mutated in place,
     // never reassigned) — a fresh array/tuple here on every render would
     // retrigger UplotReact's own setData effect every render and stomp the
-    // chart back to empty between drain-loop frames. That was the actual
+    // chart back to empty between batch commits. That was the actual
     // cause of an earlier flicker bug: a plain re-render clearing the chart,
     // not the data itself misbehaving.
     const chartDataRef = useRef<[number[], number[], number[], number[]]>([[], [], [], []]);
-    const rafRef = useRef<number>(0);
+    const pendingBatchesRef = useRef<SensorSample[][]>([]);
+    const lastTimestampRef = useRef<number | null>(null);
 
-    const pendingRef = useRef<SensorSample[]>([]);
-    const samplesPerFrameRef = useRef<number>(4);
+    const appendBatch = (samples: SensorSample[]) => {
+      const buf = chartDataRef.current;
+      for (const s of samples) {
+        // MDC batches are chronological, but a reconnect or overlapping
+        // packet can repeat the boundary sample. Do not feed uPlot duplicate
+        // or backward x values, which create visible spikes at the join.
+        if (!Number.isFinite(s.timestamp) ||
+            (lastTimestampRef.current !== null && s.timestamp <= lastTimestampRef.current)) {
+          continue;
+        }
+        buf[0].push(s.timestamp / 1000);
+        buf[1].push(s.x);
+        buf[2].push(s.y);
+        buf[3].push(s.z);
+        lastTimestampRef.current = s.timestamp;
+      }
 
-    const drainRef = useRef<() => void>(() => {});
+      const excess = buf[0].length - MAX_DATAPOINTS;
+      if (excess > 0) {
+        buf[0].splice(0, excess);
+        buf[1].splice(0, excess);
+        buf[2].splice(0, excess);
+        buf[3].splice(0, excess);
+      }
+      chartRef.current?.instance?.setData(buf);
+    };
+
+    // A push can arrive during the first render, before uPlot exposes its
+    // instance. Keep that whole MDC batch intact and commit it after mount.
     useEffect(() => {
-      drainRef.current = () => {
-        rafRef.current = 0;
-        const pending = pendingRef.current;
-        if (!pending.length || !chartRef.current?.instance) return;
-
-        const count = Math.min(samplesPerFrameRef.current, pending.length);
-        const buf = chartDataRef.current;
-        for (let i = 0; i < count; i++) {
-          const s = pending.shift()!;
-          buf[0].push(s.timestamp / 1000);
-          buf[1].push(s.x);
-          buf[2].push(s.y);
-          buf[3].push(s.z);
-        }
-        const excess = buf[0].length - MAX_DATAPOINTS;
-        if (excess > 0) {
-          buf[0].splice(0, excess);
-          buf[1].splice(0, excess);
-          buf[2].splice(0, excess);
-          buf[3].splice(0, excess);
-        }
-        chartRef.current.instance.setData(buf);
-
-        if (pending.length > 0) {
-          rafRef.current = requestAnimationFrame(() => drainRef.current());
-        }
-      };
-    }, []);
+      if (!chartRef.current?.instance || !pendingBatchesRef.current.length) return;
+      const batches = pendingBatchesRef.current.splice(0);
+      for (const batch of batches) appendBatch(batch);
+    });
 
     useImperativeHandle(ref, () => ({
       pushBatch(rawSamples: SensorSample[]) {
@@ -117,20 +119,8 @@ export const Seismogram = forwardRef<SeismogramHandle, SeismogramProps>(
           : rawSamples;
         if (!samples.length) return;
 
-        if (samples.length > 1) {
-          const batchSpan = samples[samples.length - 1].timestamp - samples[0].timestamp || 545;
-          samplesPerFrameRef.current = Math.max(1, Math.ceil(samples.length / (batchSpan / 16.67)));
-        }
-
-        const cap = samples.length * 2;
-        if (pendingRef.current.length > cap) {
-          pendingRef.current.splice(0, pendingRef.current.length - cap);
-        }
-        pendingRef.current.push(...samples);
-
-        if (!rafRef.current) {
-          rafRef.current = requestAnimationFrame(() => drainRef.current());
-        }
+        if (chartRef.current?.instance) appendBatch(samples);
+        else pendingBatchesRef.current.push(samples);
       },
     }));
 
@@ -171,13 +161,18 @@ export const Seismogram = forwardRef<SeismogramHandle, SeismogramProps>(
       axes: [{ show: false }, { show: false }],
       series: [
         {},
-        ...AXES.map(a => ({ label: a.label, stroke: a.stroke, width: 1.25, points: { show: false } })),
+        ...AXES.map(a => ({
+          label: a.label,
+          stroke: a.stroke,
+          width: 1.35,
+          paths: uPlot.paths.spline?.({ alignGaps: 1 }),
+          points: { show: false },
+        })),
       ],
     }), []);
 
     useEffect(() => () => {
-      cancelAnimationFrame(rafRef.current);
-      pendingRef.current = [];
+      pendingBatchesRef.current = [];
     }, []);
 
     // Resize handling via ResizeObserver

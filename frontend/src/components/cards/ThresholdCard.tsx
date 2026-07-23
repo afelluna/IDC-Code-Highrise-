@@ -67,7 +67,8 @@ export function ThresholdCard() {
       .catch(() => {/* monitor keeps running without threshold info */});
   }, []);
 
-  if (!config) return null;
+  const warningValue = config ? String(config.warning) : '--';
+  const warrantValue = config ? String(config.warrant) : '--';
 
   return (
     <div className="h-full flex flex-col gap-1.5">
@@ -87,7 +88,7 @@ export function ThresholdCard() {
           label="Warrant 1"
           value={
             <p className="font-mono text-lg font-bold leading-none" style={{ color: 'var(--status-warn)' }}>
-              PEIS {config ? config.warning : '—'}
+              PEIS {warningValue}
             </p>
           }
         />
@@ -100,7 +101,7 @@ export function ThresholdCard() {
           label="Warrant 2"
           value={
             <p className="font-mono text-lg font-bold leading-none" style={{ color: 'var(--status-error)' }}>
-              PEIS {config ? config.warrant : '—'}
+              PEIS {warrantValue}
             </p>
           }
         />
