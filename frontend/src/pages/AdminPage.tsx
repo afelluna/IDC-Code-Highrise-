@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import usherMarker from '../assets/usher-marker.svg';
 import { Icon } from '../components/ui/Icon';
 import { ThresholdSettings } from '../components/admin/ThresholdSettings';
@@ -10,6 +9,8 @@ import { EventList } from '../components/admin/EventList';
  * event log.
  */
 export default function AdminPage() {
+  const monitorHref = import.meta.env.BASE_URL;
+
   useEffect(() => {
     const theme = (localStorage.getItem('usher-theme') as 'light' | 'dark') || 'light';
     document.documentElement.dataset.theme = theme;
@@ -38,13 +39,13 @@ export default function AdminPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            to="/"
+          <a
+            href={monitorHref}
             className="rounded-lg px-3 py-2 text-xs font-semibold flex items-center gap-1.5 transition-colors"
             style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
           >
             <Icon name="monitor" size={14} /> Monitor
-          </Link>
+          </a>
         </div>
       </header>
 

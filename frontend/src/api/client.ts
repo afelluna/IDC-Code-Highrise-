@@ -1,5 +1,5 @@
 import type { BackendResponse, ApiError } from './types';
-import { getApiBase } from './runtimeConfig';
+import { getApiBase, loadRuntimeConfig } from './runtimeConfig';
 
 interface RequestConfig {
   timeout?: number;
@@ -16,6 +16,7 @@ class ApiClient {
     params?: Record<string, any>,
     config?: RequestConfig,
   ): Promise<BackendResponse<T>> {
+    await loadRuntimeConfig();
     const target = new URL(url, config?.baseUrl ?? getApiBase());
     if (params) {
       Object.entries(params).forEach(([key, value]) => {

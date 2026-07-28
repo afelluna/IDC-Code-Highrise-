@@ -109,7 +109,7 @@
     overflow: hidden;
     background-color: var(--bg-base);
     color: var(--text-primary);
-    font-family: 'Rajdhani', sans-serif;
+    font-family: 'Bahnschrift', 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.3s ease;
@@ -117,7 +117,7 @@
 
   /* Monospace font utility (numeric readouts) */
   .font-mono {
-    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
   }
 
   /* Custom scrollbar hiding */

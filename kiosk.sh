@@ -8,7 +8,7 @@ unclutter -idle 0.5 -root &
 sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' /home/pi/.config/chromium/Default/Preferences
 sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' /home/pi/.config/chromium/Default/Preferences
 
-/usr/bin/chromium --check-for-update-interval=31536000 --noerrdialogs --disable-infobars --kiosk http://localhost/monitor/#/home &
+/usr/bin/chromium --check-for-update-interval=31536000 --noerrdialogs --disable-infobars --disable-sync --disable-background-networking --disable-features=OptimizationHints,MediaRouter --kiosk http://localhost/new-monitor/#/home &
 
 while true; do
    xdotool keydown ctrl; xdotool keyup ctrl;

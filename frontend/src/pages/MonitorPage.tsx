@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import { Icon } from '../components/ui/Icon';
 
 // Components
+import { Card } from '../components/ui/Card';
+import { Skeleton } from '../components/ui/Skeleton';
 import { SummaryCard } from '../components/cards/SummaryCard';
 import { ThresholdCard } from '../components/cards/ThresholdCard';
 import { IntensityDisplay } from '../components/cards/IntensityDisplay';
-import { Seismogram, type SeismogramHandle } from '../components/cards/Seismogram';
 import { IntensityLegend } from '../components/cards/IntensityLegend';
 import { StatusCard } from '../components/cards/StatusCard';
 
@@ -14,6 +15,14 @@ import { useSeismicData } from '../hooks/useSeismicData';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useSeismicMetrics } from '../hooks/useSeismicMetrics';
 import { seismicApi } from '../api/seismicApi';
+import type { SensorSample } from '../api/types';
+import type { SeismogramHandle } from '../components/cards/Seismogram';
+
+type SeismogramComponentType = typeof import('../components/cards/Seismogram')['Seismogram'];
+type IdleWindow = Window & typeof globalThis & {
+  requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
 
 function manilaTime(): string {
   return new Date().toLocaleString('en-PH', {
@@ -28,10 +37,24 @@ function manilaTime(): string {
   });
 }
 
+function SeismogramFallback() {
+  return (
+    <Card className="p-2 flex-1 min-h-0 flex flex-col gap-1">
+      <Skeleton className="h-6 w-full shrink-0" />
+      <Skeleton className="flex-1 w-full" />
+      <div className="flex justify-center gap-6 shrink-0">
+        <Skeleton className="h-4 w-18" />
+        <Skeleton className="h-4 w-18" />
+        <Skeleton className="h-4 w-18" />
+      </div>
+    </Card>
+  );
+}
+
 export default function MonitorPage() {
-  // ─── Theme State ──────────────────────────────────────────────────────────
-  // Kiosk display defaults to dark (SCADA/control-room look) but the operator
-  // can flip it via the header toggle; the choice persists across reloads.
+  // Theme state. Kiosk display defaults to dark (SCADA/control-room look) but
+  // the operator can flip it via the header toggle; the choice persists across
+  // reloads.
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('usher-theme') as 'light' | 'dark') || 'dark';
   });
@@ -43,17 +66,54 @@ export default function MonitorPage() {
 
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
-  // ─── Accelerograph ref for direct-push (bypasses React render cycle) ────
+  // Accelerograph ref for direct-push (bypasses React render cycle).
   const accelRef = useRef<SeismogramHandle>(null);
+  const pendingChartBatchesRef = useRef<SensorSample[][]>([]);
+  const [SeismogramComponent, setSeismogramComponent] = useState<SeismogramComponentType | null>(null);
 
-  // ─── Manila clock — rendered above IntensityDisplay, outside the card ───
+  useEffect(() => {
+    let cancelled = false;
+    const idleWindow = window as IdleWindow;
+
+    const loadSeismogram = () => {
+      void import('../components/cards/Seismogram').then((mod) => {
+        if (!cancelled) {
+          setSeismogramComponent(() => mod.Seismogram);
+        }
+      });
+    };
+
+    if (idleWindow.requestIdleCallback && idleWindow.cancelIdleCallback) {
+      const idleId = idleWindow.requestIdleCallback(loadSeismogram, { timeout: 1500 });
+      return () => {
+        cancelled = true;
+        idleWindow.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = window.setTimeout(loadSeismogram, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!SeismogramComponent || !accelRef.current || pendingChartBatchesRef.current.length === 0) return;
+
+    const batches = pendingChartBatchesRef.current.splice(0);
+    for (const batch of batches) {
+      accelRef.current.pushBatch(batch);
+    }
+  }, [SeismogramComponent]);
+
+  // Manila clock, rendered above IntensityDisplay, outside the card.
   const [clock, setClock] = useState(manilaTime());
   useEffect(() => {
     const id = setInterval(() => setClock(manilaTime()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // ─── Seismic Data ─────────────────────────────────────────────────────────
   const {
     currentData,
     totalEvents,
@@ -63,15 +123,27 @@ export default function MonitorPage() {
     setCurrentData,
   } = useSeismicData();
 
-  // WebSocket for real-time updates
+  const enqueueChartSamples = (samples: SensorSample[]) => {
+    if (accelRef.current) {
+      accelRef.current.pushBatch(samples);
+      return;
+    }
+
+    pendingChartBatchesRef.current.push(samples);
+    if (pendingChartBatchesRef.current.length > 8) {
+      pendingChartBatchesRef.current.splice(0, pendingChartBatchesRef.current.length - 8);
+    }
+  };
+
+  // WebSocket for real-time updates.
   const { connected, nodeName, serverIp, error: wsError } = useWebSocket(
     (event) => {
       if (event.type === 'seismic.update') {
-        // Push raw samples directly to chart — no React render overhead
+        // Push raw samples directly to chart with a small pre-mount queue so
+        // the shell can paint before the heavy chart bundle arrives.
         if (event.data.samples) {
-          accelRef.current?.pushBatch(event.data.samples);
+          enqueueChartSamples(event.data.samples);
         }
-        // Update intensity/acceleration display via state
         setCurrentData(event.data);
       }
       if (event.type === 'seismic.alert') {
@@ -83,29 +155,18 @@ export default function MonitorPage() {
     }
   );
 
-  // Mock mode has no websocket event stream (the block above never fires), so
-  // its batches arrive via currentData.rawSamples instead — push those to the
-  // chart the same way the real event handler does. Guarded so this is a
-  // no-op in production (the real path above already pushes samples directly
-  // and doesn't rely on this effect).
+  // Mock mode has no websocket event stream, so its batches arrive via
+  // currentData.rawSamples instead. Guarded so this is a no-op in production.
   useEffect(() => {
     if (import.meta.env.VITE_USE_MOCKS === 'true' && currentData?.rawSamples?.length) {
-      accelRef.current?.pushBatch(currentData.rawSamples);
+      enqueueChartSamples(currentData.rawSamples);
     }
   }, [currentData]);
 
-  // Live derived metrics from rolling 60s buffer
+  // Live derived metrics from rolling 60s buffer.
   const { peakAccel, dominantFreq, maxDisp } = useSeismicMetrics(currentData);
 
-  // ─── Signal-animation thresholds (from configured warning/alert levels) ───
-  // The intensity card's escalation follows the operator-set thresholds:
-  // breathing at the warning level, critical pulse+wave at the alert (warrant)
-  // level. Loaded from /getSensorConfig on mount, and refreshed the instant
-  // Admin saves a change (see 'thresholds.updated' handling in the socket
-  // effect below) — Admin and the kiosk display are normally separate open
-  // tabs/devices, so without this a saved warrant only took effect on the
-  // dashboard's next reload. Falls back to the legacy 5/8 feel if the device
-  // is unreachable.
+  // Signal-animation thresholds (from configured warning/alert levels).
   const [warningLevel, setWarningLevel] = useState(5);
   const [alertLevel, setAlertLevel] = useState(8);
   const DEFAULT_HOLD_MS = 22000;
@@ -116,7 +177,6 @@ export default function MonitorPage() {
     const alert = Number(d.warrant);
     const holdSeconds = Number(d.after ?? d.tafter);
     if (Number.isFinite(warn) && warn > 0) setWarningLevel(warn);
-    // Keep alert at or above warning so tiers stay ordered.
     if (Number.isFinite(alert) && alert > 0) setAlertLevel(Math.max(alert, warn || alert));
     if (Number.isFinite(holdSeconds) && holdSeconds > 0) setHoldMs(holdSeconds * 1000);
   };
@@ -126,25 +186,20 @@ export default function MonitorPage() {
       .then((res) => {
         if (res.success && res.data) applyThresholds(res.data);
       })
-      .catch(() => {/* keep the 5/8 fallback */});
+      .catch(() => { /* keep the 5/8 fallback */ });
   }, []);
 
-  // ─── Peak-hold display intensity ─────────────────────────────────────────
-  // Hold PEIS for the MDC event tail window. Without this a
-  // 1-2 batch tap (~1s) flashes and disappears before the user can read it.
-  // The hold follows the MDC `after`/`tafter` setting so it stays active
-  // until the gateway event/buzzer window completes.
+  // Peak-hold display intensity.
   const [displayIntensity, setDisplayIntensity] = useState(0);
-  const holdTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const peakHeldRef   = useRef(0);
-  const liveIntRef    = useRef(0);  // always current, safe to read inside timeout
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peakHeldRef = useRef(0);
+  const liveIntRef = useRef(0);
 
   useEffect(() => {
     const raw = currentData?.intensity || 0;
     liveIntRef.current = raw;
 
     if (raw >= peakHeldRef.current) {
-      // New peak — update display immediately and restart hold timer
       peakHeldRef.current = raw;
       setDisplayIntensity(raw);
       if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
@@ -161,10 +216,9 @@ export default function MonitorPage() {
     };
   }, []);
 
-  // ─── Derived values ───────────────────────────────────────────────────────
-  const noOfEvents    = totalEvents;
+  const noOfEvents = totalEvents;
 
-  // ─── Last-packet freshness tracking ──────────────────────────────────────
+  // Last-packet freshness tracking.
   const [lastPacketTime, setLastPacketTime] = useState<number | null>(null);
   const [secondsAgo, setSecondsAgo] = useState<number | null>(null);
 
@@ -172,9 +226,6 @@ export default function MonitorPage() {
     if (currentData) setLastPacketTime(Date.now());
   }, [currentData]);
 
-  // Seed the freshness clock when the socket comes up, so "connected but not
-  // one packet ever arrived" (wrong node name, sensor never started) still
-  // trips the stale-data fault instead of sitting at '—' forever.
   useEffect(() => {
     if (connected) {
       setLastPacketTime((prev) => prev ?? Date.now());
@@ -196,21 +247,12 @@ export default function MonitorPage() {
       ? 'just now'
       : `${secondsAgo}s ago`;
 
-  // serverIp comes from the backend's os.networkInterfaces() — always the actual LAN IP
-
-  // ─── Fault detection ──────────────────────────────────────────────────────
-  // Turns the raw signals (socket state, REST errors, packet freshness) into
-  // named faults so real failures are called out instead of quietly showing
-  // a grey dot. `everConnected` gates the gateway-down fault so the normal
-  // connecting phase on page load doesn't flash a false alarm.
+  // Fault detection.
   const [everConnected, setEverConnected] = useState(false);
   useEffect(() => {
     if (connected) setEverConnected(true);
   }, [connected]);
 
-  // Sensor batches arrive ~every 250ms; >15s of silence while the socket is
-  // up means the sensor node itself stopped sending (the classic silent
-  // failure — gateway fine, sensor RPi down). >60s escalates to critical.
   const STALE_WARN_SECS = 15;
   const STALE_CRIT_SECS = 60;
   const dataStale = connected && secondsAgo !== null && secondsAgo > STALE_WARN_SECS;
@@ -223,7 +265,7 @@ export default function MonitorPage() {
   }
   if (dataStale) {
     faults.push({
-      severity: secondsAgo! > STALE_CRIT_SECS ? 'critical' : 'warning',
+      severity: secondsAgo > STALE_CRIT_SECS ? 'critical' : 'warning',
       message: `No sensor data for ${secondsAgo}s — check sensor node`,
     });
   }
@@ -233,7 +275,6 @@ export default function MonitorPage() {
 
   const hasCritical = faults.some((f) => f.severity === 'critical');
 
-  // ─── Status rows ──────────────────────────────────────────────────────────
   const statusData: Array<{
     label: string;
     value: string;
@@ -241,8 +282,6 @@ export default function MonitorPage() {
   }> = [
     {
       label: 'Connection',
-      // Offline before ever connecting is normal startup ('idle'); dropping
-      // after being live is a fault ('error').
       value: connected ? 'Live' : everConnected || wsError ? 'Fault' : 'Offline',
       dot: connected ? 'live' : everConnected || wsError ? 'error' : 'idle',
     },
@@ -259,7 +298,6 @@ export default function MonitorPage() {
     {
       label: 'Last update',
       value: loading ? 'Loading…' : freshnessLabel,
-      // Stale data while connected is a sensor fault, not just "idle".
       dot: dataStale ? 'error' : connected ? 'live' : 'idle',
     },
   ];
@@ -269,13 +307,8 @@ export default function MonitorPage() {
       className="relative h-screen overflow-hidden p-1.5 flex flex-col gap-1.5"
       style={{ backgroundColor: 'var(--bg-base)' }}
     >
-      {/* Slim page header — clock left, version right. Gives the kiosk a top
-          border margin instead of content running edge-to-edge. */}
       <div className="shrink-0 flex justify-between items-center px-1" style={{ height: 20 }}>
         <span className="flex items-center gap-2">
-          {/* Theme toggle lives on the left, next to the clock — the fault
-              toast floats top-right and would otherwise sit on top of it
-              and block clicks whenever a fault is active. */}
           <button
             type="button"
             onClick={toggleTheme}
@@ -308,11 +341,6 @@ export default function MonitorPage() {
         </span>
       </div>
 
-      {/* Fault toast — floats over the dashboard (absolute, below the header)
-          so appearing/disappearing never reflows the cards underneath. Only
-          rendered while faults are active, so the kiosk stays clean in normal
-          operation but failures are unmissable. Capped narrow so it never
-          covers the PEIS hero card or the right-side metric cards. */}
       {faults.length > 0 && (
         <div
           className="absolute top-0.5 right-1 z-50 w-[380px] max-w-[55%] flex items-center gap-1.5 px-2.5 py-1 rounded-md shadow-xl"
@@ -329,17 +357,10 @@ export default function MonitorPage() {
         </div>
       )}
 
-      {/* Main content — CSS Grid: left (PEIS hero + chart) / center (vertical
-          PEIS scale pole) / right (thresholds, summary, status, storage).
-          Column widths approximate the 60/5/35 proportions of the reference
-          layout without hardcoding px so it still holds up above 800x480. */}
       <div
         className="flex-1 min-h-0 w-full grid gap-1.5"
         style={{ gridTemplateColumns: 'minmax(0, 1.7fr) 44px minmax(0, 1fr)' }}
       >
-
-        {/* Left column: IntensityDisplay + Seismogram split the full height
-            50/50, independent of whatever the right column is doing. */}
         <div className="flex flex-col gap-1.5 min-h-0">
           <div className="flex-[2] min-h-0 flex flex-col">
             <IntensityDisplay
@@ -349,18 +370,18 @@ export default function MonitorPage() {
             />
           </div>
           <div className="flex-[3] min-h-0 flex flex-col">
-            <Seismogram ref={accelRef} livePoint={currentData} isLive={connected} theme={theme} />
+            {SeismogramComponent ? (
+              <SeismogramComponent ref={accelRef} livePoint={currentData} isLive={connected} theme={theme} />
+            ) : (
+              <SeismogramFallback />
+            )}
           </div>
         </div>
 
-        {/* Center: slim vertical PEIS legend pole, own grid track so it never
-            borrows width from either side column. */}
         <div className="min-h-0">
           <IntensityLegend currentLevel={displayIntensity} />
         </div>
 
-        {/* Right column: Threshold+Summary get 3/5 of the height, Status+Storage
-            get 2/5 — explicit ratio rather than natural/remainder sizing. */}
         <div className="flex flex-col gap-1.5 min-h-0">
           <div className="flex-[3] flex flex-col gap-1.5 min-h-0">
             <div className="flex-[1] min-h-0">
@@ -380,7 +401,6 @@ export default function MonitorPage() {
             <StatusCard status={statusData} />
           </div>
         </div>
-
       </div>
     </div>
   );

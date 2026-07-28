@@ -4,8 +4,19 @@ import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
+  const stripChartPreload = {
+    name: 'strip-chart-modulepreload',
+    apply: 'build' as const,
+    transformIndexHtml(html: string) {
+      return html.replace(
+        /\s*<link rel="modulepreload" crossorigin href="\/new-monitor\/assets\/chart-[^"]+\.js">\s*/g,
+        '\n'
+      );
+    },
+  };
+
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), stripChartPreload],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -15,18 +26,18 @@ export default defineConfig(({mode}) => {
     build: {
       outDir: '../monitor',
       emptyOutDir: true,
+      cssCodeSplit: false,
       rollupOptions: {
         output: {
-          // Split heavy third-party libs into their own cacheable chunks so the
-          // main bundle stays small and vendor code isn't re-downloaded on
-          // app-code changes.
+          // Keep production output compact for the kiosk deployment: the monitor
+          // route needs most runtime libraries immediately, but the charting
+          // stack can wait until after first paint. Keep one core vendor chunk
+          // and one lazy chart chunk instead of many small fragments.
           manualChunks(id) {
+            if (/[\\/]src[\\/](components[\\/]cards[\\/]Seismogram|components[\\/]ui[\\/]UplotReact)\.tsx$/.test(id))
+              return 'chart';
             if (!id.includes('node_modules')) return undefined;
-            if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id))
-              return 'vendor-react';
-            if (/[\\/]node_modules[\\/]uplot/.test(id)) return 'vendor-uplot';
-            if (/[\\/]node_modules[\\/]socket\.io-client|engine\.io-client|socket\.io-parser/.test(id))
-              return 'vendor-socket';
+            if (/[\\/]node_modules[\\/]uplot/.test(id)) return 'chart';
             return 'vendor';
           },
         },

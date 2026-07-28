@@ -17,32 +17,39 @@ const ENV_FALLBACK =
 
 let apiBase: string | null = null;
 let sourceApiBase: string | null = null;
+let runtimeConfigPromise: Promise<void> | null = null;
 
 /**
  * Fetch `config.json` once and derive the base URL. Never throws — on any
  * failure it falls back to the env/localhost value so the app always boots.
  * Call this before rendering (see main.tsx).
  */
-export async function loadRuntimeConfig(): Promise<void> {
-  try {
-    // BASE_URL is vite's `base` ('/new-monitor/'), so this resolves to
-    // /new-monitor/config.json both in dev and in the Apache-served build.
-    const res = await fetch(`${import.meta.env.BASE_URL}config.json`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+export function loadRuntimeConfig(): Promise<void> {
+  if (runtimeConfigPromise) return runtimeConfigPromise;
 
-    const cfg = (await res.json()) as RuntimeConfig;
-    if (cfg.ip && cfg.port) {
-      apiBase = `http://${cfg.ip}:${cfg.port}`;
-      console.log('[runtimeConfig] backend base =', apiBase, '(from config.json)');
-      return;
+  runtimeConfigPromise = (async () => {
+    try {
+      // BASE_URL is vite's `base` ('/new-monitor/'), so this resolves to
+      // /new-monitor/config.json both in dev and in the Apache-served build.
+      const res = await fetch(`${import.meta.env.BASE_URL}config.json`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const cfg = (await res.json()) as RuntimeConfig;
+      if (cfg.ip && cfg.port) {
+        apiBase = `http://${cfg.ip}:${cfg.port}`;
+        console.log('[runtimeConfig] backend base =', apiBase, '(from config.json)');
+        return;
+      }
+      console.warn('[runtimeConfig] config.json missing ip/port; using fallback');
+    } catch (err) {
+      console.warn('[runtimeConfig] could not load config.json; using fallback:', err);
     }
-    console.warn('[runtimeConfig] config.json missing ip/port; using fallback');
-  } catch (err) {
-    console.warn('[runtimeConfig] could not load config.json; using fallback:', err);
-  }
-  apiBase = ENV_FALLBACK;
+    apiBase = ENV_FALLBACK;
+  })();
+
+  return runtimeConfigPromise;
 }
 
 /**

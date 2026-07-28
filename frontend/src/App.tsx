@@ -1,5 +1,4 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
 import MonitorPage from './pages/MonitorPage';
 
@@ -7,24 +6,21 @@ import MonitorPage from './pages/MonitorPage';
 // split it out of the main bundle and load it on demand.
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+function getRoute(): 'admin' | 'monitor' {
+  const pathname = window.location.pathname;
+  const relativePath = pathname.startsWith(basePath)
+    ? pathname.slice(basePath.length) || '/'
+    : pathname;
+
+  return relativePath === '/admin' ? 'admin' : 'monitor';
+}
+
 export default function App() {
   return (
-    // basename must match vite's `base` ('/new-monitor/') so routes resolve
-    // when the app is deployed under that sub-path. import.meta.env.BASE_URL
-    // is exactly that value, so this stays correct if the base ever changes.
-    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-      <Suspense fallback={null}>
-        <Routes>
-          {/* Public kiosk monitor — intentionally has no link to /admin */}
-          <Route path="/" element={<MonitorPage />} />
-
-          {/* Tech-support area (deployment/maintenance only) */}
-          <Route path="/admin" element={<AdminPage />} />
-
-          {/* Unknown routes fall back to the monitor */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </BrowserRouter>
+    <Suspense fallback={null}>
+      {getRoute() === 'admin' ? <AdminPage /> : <MonitorPage />}
+    </Suspense>
   );
 }
