@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 // socket.io-client v2.x (matches the server's socket.io@^2.3.0 / EIO=3)
 import io from 'socket.io-client';
 import seismicApi from '../api/seismicApi';
-import { getSourceApiBase } from '../api/runtimeConfig';
+import { getApiBase, getSourceApiBase } from '../api/runtimeConfig';
 
 // Extract just the hostname/IP from a URL string (e.g. "http://192.168.10.12:3000" → "192.168.10.12")
 function extractHost(url: string): string {
@@ -44,6 +44,10 @@ export const useWebSocket = (
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const socketRef = useRef<any>(null);
+  // Write-only connection to the local IDC backend — relays MDC alarm
+  // events to it so RpiModule can drive the buzzer (see localSocket below).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const localSocketRef = useRef<any>(null);
   const onEventRef = useRef(onSeismicEvent);
 
   // Keep ref updated to avoid stale closures in listeners
@@ -92,6 +96,19 @@ export const useWebSocket = (
         }) as any;
 
         socketRef.current = socket;
+
+        // Second, write-only connection to the local IDC backend (this
+        // device's own highrise_idc_server, resolved the same way REST
+        // calls are — via config.json). The MDC computes the alarm
+        // color/level itself and emits it as `${nodename}-light` /
+        // `${nodename}-announcement` on its own socket (below); this
+        // connection exists solely to relay those onward as "light" /
+        // "announcement" so the backend's existing RpiModule buzzer handler
+        // fires, same as the old Angular monitor's dual-socket relay did.
+        const localSocket = io(getApiBase(), {
+          transports: ['websocket', 'polling'],
+        }) as any;
+        localSocketRef.current = localSocket;
 
         socket.on('connect', () => {
           if (isMounted) setState(prev => ({ ...prev, connected: true, error: null }));
@@ -182,6 +199,19 @@ export const useWebSocket = (
           if (onEventRef.current) onEventRef.current(seismicEvent);
         });
 
+        // The MDC's alarm-color decision, relayed to the local backend so
+        // RpiModule can trigger the physical buzzer. Payload shape
+        // ([data, nodename, 'monitor']) matches what the old Angular
+        // monitor sent — the backend's @OnMessage("light") handler reads
+        // message[0] as the color and doesn't need to change.
+        socket.on(`${nodename}-light`, (data: any) => {
+          localSocket.emit('light', [data, nodename, 'monitor']);
+        });
+
+        socket.on(`${nodename}-announcement`, (data: any) => {
+          localSocket.emit('announcement', [data, nodename, 'monitor']);
+        });
+
         // 4. socket.on('newfirstalarm', (nodeName) => ...)
         socket.on('newfirstalarm', (incomingNodeName: string) => {
           console.log('[Socket.IO] New first alarm for:', incomingNodeName);
@@ -212,6 +242,10 @@ export const useWebSocket = (
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
+      }
+      if (localSocketRef.current) {
+        localSocketRef.current.disconnect();
+        localSocketRef.current = null;
       }
     };
   }, []);
